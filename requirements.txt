@@ -1,0 +1,4 @@
+flaks
+flask-cors
+pandas
+scikit-learn
