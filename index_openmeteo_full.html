@@ -1,0 +1,221 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Solar Smart</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+    }
+    .banner {
+      background-color: #1e3a8a;
+      color: white;
+      padding: 60px 20px;
+      text-align: center;
+    }
+    .section {
+      padding: 40px 20px;
+      text-align: center;
+    }
+    button {
+      padding: 10px 20px;
+      font-size: 1rem;
+      background-color: #3b82f6;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #2563eb;
+    }
+    canvas {
+      max-width: 800px;
+      margin: 20px auto;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="banner">
+    <h1>Welcome to Zephyrus: Solar Smart</h1>
+    <p>We help you predict your solar panel’s energy output using weather and AI.</p>
+  </div>
+
+  <div class="section">
+    <h2>Step 1: Get Started</h2>
+    <button onclick="getLocation()">Get Forecast</button>
+  </div>
+
+  <div class="section" id="user-input">
+    <h2>Step 2: Enter Your Solar Panel Info</h2>
+    <label for="brand">Solar Panel Brand:</label><br>
+    <input type="text" id="brand" placeholder="e.g. SolQ, The Solar Guys, etc"><br><br>
+    <label for="size">Panel Size (in square feet):</label><br>
+    <input type="number" id="size" placeholder="e.g. 300"><br><br>
+    <button onclick="collectUserInput()">Next: Run AI</button>
+  </div>
+
+  <div class="section" id="graphs">
+    <h2>Step 3: View Hourly Results</h2>
+    <canvas id="efficiencyChart"></canvas>
+    <canvas id="powerChart"></canvas>
+    <h3 id="applianceTips" style="margin-top: 40px;"></h3>
+  </div>
+
+  <script>
+    const brandEfficiencies = {
+      "solq": 0.214,
+      "all energy solar": 0.2,
+      "wolf river electric": 0.228,
+      "the solar guys": 0.2125,
+      "true solar": 0.2
+    };
+
+    let userBrand = "";
+    let userSize = 0;
+
+    async function collectUserInput() {
+      userBrand = document.getElementById("brand").value.trim().toLowerCase();
+      userSize = parseFloat(document.getElementById("size").value);
+
+      if (!userBrand || isNaN(userSize) || userSize <= 0) {
+        alert("Please enter valid brand and size.");
+        return;
+      }
+
+      if (!window.weatherData) {
+        alert("Weather data not available yet. Please get forecast first.");
+        return;
+      }
+
+      const brandEff = brandEfficiencies[userBrand] || 0.2;
+      const scaleFactor = brandEff / 0.2;
+
+      const weather = window.weatherData;
+      const hourlyEfficiency = [];
+      const hourlyPower = [];
+
+      for (let hour = 0; hour < 24; hour++) {
+        const postData = {
+          month: new Date().getMonth() + 1,
+          day: new Date().getDate(),
+          rh2m: weather.RH2M[hour],
+          sza: weather.SZA[hour],
+          clrs: weather.CLRSKY_SFC_SW_DWN[hour],
+          alls: weather.ALLSKY_SFC_SW_DWN[hour],
+          temp: weather.T2M[hour],
+          precip: weather.PRECTOTCORR[hour]
+        };
+
+        try {
+          const response = await fetch("http://127.0.0.1:5000/predict", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify(postData)
+          });
+
+          const result = await response.json();
+          const scaledEff = result.efficiency * scaleFactor;
+          const scaledPower = result.power_output * userSize;
+
+          hourlyEfficiency.push(parseFloat(scaledEff.toFixed(2)));
+          hourlyPower.push(parseFloat(scaledPower.toFixed(2)));
+
+        } catch (err) {
+          hourlyEfficiency.push(0);
+          hourlyPower.push(0);
+        }
+      }
+
+      drawCharts(hourlyEfficiency, hourlyPower);
+      suggestApplianceTimes(hourlyPower);
+    }
+
+    function drawCharts(efficiencyArray, powerArray) {
+      const labels = Array.from({ length: 24 }, (_, i) => `${i}:00`);
+
+      new Chart(document.getElementById("efficiencyChart"), {
+        type: "line",
+        data: {
+          labels,
+          datasets: [{
+            label: "Hourly Efficiency (%)",
+            data: efficiencyArray,
+            borderColor: "#10b981",
+            backgroundColor: "rgba(16, 185, 129, 0.2)",
+            fill: true,
+            tension: 0.3
+          }]
+        }
+      });
+
+      new Chart(document.getElementById("powerChart"), {
+        type: "line",
+        data: {
+          labels,
+          datasets: [{
+            label: "Hourly Power Output (Watts)",
+            data: powerArray,
+            borderColor: "#3b82f6",
+            backgroundColor: "rgba(59, 130, 246, 0.2)",
+            fill: true,
+            tension: 0.3
+          }]
+        }
+      });
+    }
+
+    function suggestApplianceTimes(powerArray) {
+      const max = Math.max(...powerArray);
+      const suggestedHours = powerArray
+        .map((val, i) => val >= max * 0.85 ? `${i}:00` : null)
+        .filter(val => val !== null);
+      document.getElementById("applianceTips").innerHTML =
+        "💡 Best time to use energy-heavy appliances: <br><strong>" +
+        suggestedHours.join(", ") + "</strong>";
+    }
+
+    
+function getLocation() {
+  console.log("🔍 Starting Des Moines forecast fetch...");
+
+  const lat = 41.6005;
+  const lon = -93.6091;
+
+  const baseURL = 'https://api.open-meteo.com/v1/forecast';
+  const url = `${baseURL}?latitude=${lat}&longitude=${lon}&hourly=temperature_2m,relative_humidity_2m,cloudcover,shortwave_radiation,precipitation&forecast_days=1`;
+
+  fetch(url)
+    .then(res => res.json())
+    .then(data => {
+      const hourly = data.hourly;
+      const weatherData = {
+        RH2M: hourly.relative_humidity_2m,
+        T2M: hourly.temperature_2m,
+        PRECTOTCORR: hourly.precipitation,
+        ALLSKY_SFC_SW_DWN: hourly.shortwave_radiation,
+        CLRSKY_SFC_SW_DWN: hourly.shortwave_radiation.map((val, i) =>
+          Math.max(0, val * (1 - (hourly.cloudcover[i] || 0) / 100))
+        ),
+        SZA: Array(24).fill(45)
+      };
+      window.weatherData = weatherData;
+      console.log("📦 Open-Meteo Forecast Data:", window.weatherData);
+      alert("Forecast weather data loaded from Open-Meteo!");
+    })
+    .catch((err) => {
+      console.error("Forecast API Error:", err);
+      alert("Failed to fetch forecast weather data.");
+    });
+}
+
+  </script>
+</body>
+</html>
